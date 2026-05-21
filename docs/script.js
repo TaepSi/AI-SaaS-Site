@@ -1,5 +1,5 @@
 // Базовый URL бекенда
-const API_URL = "https://ai-saas-backend.onrender.com";
+const API_URL = "https://ai-saas-site.onrender.com";
 
 // Проверка email
 function isValidEmail(email) {
