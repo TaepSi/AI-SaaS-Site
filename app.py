@@ -9,7 +9,6 @@ import json
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# Добавляем CORS-заголовки вручную для надёжности
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -87,7 +86,7 @@ def get_history(user_id):
 
 # --- Маршруты ---
 
-@app.route("/", methods=["GET", "OPTIONS"])
+@app.route("/", methods=["GET"])
 def home():
     return jsonify({"status": "ok", "ai": "DeepSeek"})
 
@@ -133,22 +132,27 @@ def history():
 def chat():
     if request.method == "OPTIONS":
         return jsonify({}), 200
+
     data = request.get_json()
     user_id = data.get("user_id")
     message = data.get("message", "").strip()
+
     if not user_id or not message:
         return jsonify({"error": "user_id и message обязательны"}), 400
 
+    # Сохраняем сообщение пользователя
     save_message(int(user_id), "user", message)
 
+    # Если API-ключ не задан — возвращаем заглушку
     if not DEEPSEEK_API_KEY:
-        fallback = f"Это демо-ответ. Вы написали: «{message}». Настройте DEEPSEEK_API_KEY."
+        fallback = f"Привет! Я демо-версия DeepSeek. Вы написали: «{message}». Чтобы я стал умнее, добавьте DEEPSEEK_API_KEY в Render."
         save_message(int(user_id), "ai", fallback)
-        def generate_fallback():
-            for char in fallback:
-                yield f"data: {char}\n\n"
-        return Response(generate_fallback(), mimetype="text/event-stream")
+        return Response(
+            f"data: {fallback}\n\n",
+            mimetype="text/event-stream"
+        )
 
+    # Реальный запрос к DeepSeek
     try:
         headers = {
             "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -159,40 +163,66 @@ def chat():
             "messages": [{"role": "user", "content": message}],
             "stream": True
         }
-        print("Отправляю запрос к DeepSeek...")
-        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload, stream=True, timeout=30)
-        print(f"Статус ответа: {response.status_code}")
+
+        response = requests.post(
+            DEEPSEEK_API_URL,
+            headers=headers,
+            json=payload,
+            stream=True,
+            timeout=30
+        )
+
+        # Проверяем статус ответа
+        if response.status_code != 200:
+            error_msg = f"Ошибка DeepSeek API: {response.status_code}"
+            save_message(int(user_id), "ai", error_msg)
+            return Response(
+                f"data: {error_msg}\n\n",
+                mimetype="text/event-stream"
+            )
 
         def generate():
             full_response = ""
             for line in response.iter_lines():
                 if line:
                     line = line.decode("utf-8")
-                    print(f"LINE: {line}")
                     if line.startswith("data: "):
                         json_str = line[6:]
                         if json_str.strip() == "[DONE]":
                             break
                         try:
-                            chunk_data = json.loads(json_str)
-                            delta = chunk_data.get("choices", [{}])[0].get("delta", {})
+                            chunk = json.loads(json_str)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
                             content = delta.get("content", "")
                             if content:
                                 full_response += content
                                 yield f"data: {content}\n\n"
-                        except Exception as e:
-                            print(f"Ошибка парсинга чанка: {e}")
-            save_message(int(user_id), "ai", full_response)
+                        except json.JSONDecodeError:
+                            pass
+
+            # Сохраняем полный ответ AI
+            if full_response:
+                save_message(int(user_id), "ai", full_response)
+            else:
+                save_message(int(user_id), "ai", "DeepSeek не ответил.")
 
         return Response(generate(), mimetype="text/event-stream")
 
+    except requests.exceptions.Timeout:
+        error_msg = "DeepSeek не ответил вовремя. Попробуйте позже."
+        save_message(int(user_id), "ai", error_msg)
+        return Response(
+            f"data: {error_msg}\n\n",
+            mimetype="text/event-stream"
+        )
+
     except Exception as e:
         error_msg = f"Ошибка AI: {str(e)}"
-        print(error_msg)
         save_message(int(user_id), "ai", error_msg)
-        def generate_error():
-            yield f"data: {error_msg}\n\n"
-        return Response(generate_error(), mimetype="text/event-stream")
+        return Response(
+            f"data: {error_msg}\n\n",
+            mimetype="text/event-stream"
+        )
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
