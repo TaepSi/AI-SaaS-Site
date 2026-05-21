@@ -1,0 +1,171 @@
+from flask import Flask, request, jsonify, Response
+from flask_cors import CORS
+import sqlite3
+import os
+from datetime import datetime
+import google.generativeai as genai
+
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+DB = "ai_saas.db"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
+# Настройка Gemini
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-2.0-flash-exp")
+else:
+    model = None
+
+# --- База данных ---
+
+def init_db():
+    conn = sqlite3.connect(DB)
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- Вспомогательные функции ---
+
+def get_user_by_email(email):
+    conn = sqlite3.connect(DB)
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE email = ?", (email,))
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+def create_user(email, password):
+    conn = sqlite3.connect(DB)
+    cur = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    cur.execute("INSERT INTO users (email, password, created_at) VALUES (?, ?, ?)", (email, password, now))
+    conn.commit()
+    user_id = cur.lastrowid
+    conn.close()
+    return user_id
+
+def save_message(user_id, role, content):
+    conn = sqlite3.connect(DB)
+    cur = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    cur.execute("INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)", (user_id, role, content, now))
+    conn.commit()
+    conn.close()
+
+def get_history(user_id):
+    conn = sqlite3.connect(DB)
+    cur = conn.cursor()
+    cur.execute("SELECT role, content FROM messages WHERE user_id = ? ORDER BY id ASC", (user_id,))
+    rows = cur.fetchall()
+    conn.close()
+    return [{"role": r[0], "content": r[1]} for r in rows]
+
+# --- Маршруты ---
+
+@app.route("/")
+def home():
+    return jsonify({"status": "ok"})
+
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json()
+    email = data.get("email", "").strip()
+    password = data.get("password", "").strip()
+    if not email or not password:
+        return jsonify({"error": "Email и пароль обязательны"}), 400
+    if len(password) < 3:
+        return jsonify({"error": "Пароль минимум 3 символа"}), 400
+    existing = get_user_by_email(email)
+    if existing:
+        return jsonify({"error": "Пользователь с таким email уже существует"}), 400
+    user_id = create_user(email, password)
+    return jsonify({"success": True, "user_id": user_id})
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json()
+    email = data.get("email", "").strip()
+    password = data.get("password", "").strip()
+    if not email or not password:
+        return jsonify({"error": "Email и пароль обязательны"}), 400
+    user = get_user_by_email(email)
+    if not user or user[2] != password:
+        return jsonify({"error": "Неверный email или пароль"}), 401
+    return jsonify({"success": True, "user_id": user[0], "email": user[1]})
+
+@app.route("/history", methods=["GET"])
+def history():
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id обязателен"}), 400
+    return jsonify(get_history(int(user_id)))
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    data = request.get_json()
+    user_id = data.get("user_id")
+    message = data.get("message", "").strip()
+    if not user_id or not message:
+        return jsonify({"error": "user_id и message обязательны"}), 400
+
+    # Сохраняем сообщение пользователя
+    save_message(int(user_id), "user", message)
+
+    # Если нет API-ключа — используем заглушку
+    if not GEMINI_API_KEY or not model:
+        fallback = f"Это демо-ответ. Вы написали: «{message}». Настройте GEMINI_API_KEY для реальных ответов."
+        save_message(int(user_id), "ai", fallback)
+
+        def generate_fallback():
+            for char in fallback:
+                yield f"data: {char}\n\n"
+        return Response(generate_fallback(), mimetype="text/event-stream")
+
+    # Реальный ответ от Gemini
+    try:
+        response = model.generate_content(message, stream=True)
+
+        def generate():
+            full_response = ""
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+                    yield f"data: {chunk.text}\n\n"
+            # Сохраняем полный ответ AI
+            save_message(int(user_id), "ai", full_response)
+
+        return Response(generate(), mimetype="text/event-stream")
+
+    except Exception as e:
+        error_msg = f"Ошибка AI: {str(e)}"
+        save_message(int(user_id), "ai", error_msg)
+
+        def generate_error():
+            yield f"data: {error_msg}\n\n"
+        return Response(generate_error(), mimetype="text/event-stream")
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
