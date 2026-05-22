@@ -204,3 +204,26 @@ if (window.location.pathname.includes("dashboard.html")) {
         welcomeText.textContent = `Добро пожаловать, ${email}!`;
     }
 }
+
+// Загрузка статистики для дашборда
+if (window.location.pathname.includes("dashboard.html")) {
+    requireAuth();
+    const userId = localStorage.getItem("user_id");
+    const email = localStorage.getItem("email");
+    const welcomeText = document.getElementById("welcomeText");
+    if (welcomeText) {
+        welcomeText.textContent = `Добро пожаловать, ${email}!`;
+    }
+
+    // Загружаем реальную статистику
+    fetch(`${API_URL}/stats?user_id=${userId}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) return;
+            document.getElementById("statSent").textContent = data.sent;
+            document.getElementById("statReceived").textContent = data.received;
+            document.getElementById("statDays").textContent = data.days;
+            document.getElementById("statTokens").textContent = data.tokens;
+        })
+        .catch(err => console.error("Ошибка загрузки статистики:", err));
+}
