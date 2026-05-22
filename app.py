@@ -1,10 +1,11 @@
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
-import sqlite3
 import os
 from datetime import datetime
 import requests
 import json
+import psycopg2
+import psycopg2.extras
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
@@ -16,18 +17,22 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
     return response
 
-DB = "ai_saas.db"
+# Подключение к Neon (строка из переменной окружения)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+def get_conn():
+    return psycopg2.connect(DATABASE_URL, sslmode='require')
 
 # --- База данных ---
 
 def init_db():
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             created_at TEXT NOT NULL
@@ -35,7 +40,7 @@ def init_db():
     """)
     cur.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
@@ -51,35 +56,35 @@ init_db()
 # --- Вспомогательные функции ---
 
 def get_user_by_email(email):
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE email = ?", (email,))
+    cur.execute("SELECT * FROM users WHERE email = %s", (email,))
     row = cur.fetchone()
     conn.close()
     return row
 
 def create_user(email, password):
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     cur = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    cur.execute("INSERT INTO users (email, password, created_at) VALUES (?, ?, ?)", (email, password, now))
+    cur.execute("INSERT INTO users (email, password, created_at) VALUES (%s, %s, %s) RETURNING id", (email, password, now))
+    user_id = cur.fetchone()[0]
     conn.commit()
-    user_id = cur.lastrowid
     conn.close()
     return user_id
 
 def save_message(user_id, role, content):
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     cur = conn.cursor()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    cur.execute("INSERT INTO messages (user_id, role, content, created_at) VALUES (?, ?, ?, ?)", (user_id, role, content, now))
+    cur.execute("INSERT INTO messages (user_id, role, content, created_at) VALUES (%s, %s, %s, %s)", (user_id, role, content, now))
     conn.commit()
     conn.close()
 
 def get_history(user_id):
-    conn = sqlite3.connect(DB)
+    conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT role, content FROM messages WHERE user_id = ? ORDER BY id ASC", (user_id,))
+    cur.execute("SELECT role, content FROM messages WHERE user_id = %s ORDER BY id ASC", (user_id,))
     rows = cur.fetchall()
     conn.close()
     return [{"role": r[0], "content": r[1]} for r in rows]
@@ -88,7 +93,7 @@ def get_history(user_id):
 
 @app.route("/", methods=["GET"])
 def home():
-    return jsonify({"status": "ok", "ai": "Groq (Llama 3)"})
+    return jsonify({"status": "ok", "ai": "Groq (Llama 3)", "db": "Neon PostgreSQL"})
 
 @app.route("/register", methods=["POST", "OPTIONS"])
 def register():
@@ -132,24 +137,19 @@ def history():
 def chat():
     if request.method == "OPTIONS":
         return jsonify({}), 200
-
     data = request.get_json()
     user_id = data.get("user_id")
     message = data.get("message", "").strip()
-
     if not user_id or not message:
         return jsonify({"error": "user_id и message обязательны"}), 400
 
-    # Сохраняем сообщение пользователя
     save_message(int(user_id), "user", message)
 
-    # Если API-ключ не задан — возвращаем заглушку
     if not GROQ_API_KEY:
-        fallback = f"Привет! Я демо-версия Groq (Llama 3). Вы написали: «{message}». Добавьте GROQ_API_KEY в Render."
+        fallback = f"Привет! Я демо-версия Groq. Вы написали: «{message}». Добавьте GROQ_API_KEY в Render."
         save_message(int(user_id), "ai", fallback)
         return Response(f"data: {fallback}\n\n", mimetype="text/event-stream")
 
-    # Реальный запрос к Groq
     try:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -160,7 +160,6 @@ def chat():
             "messages": [{"role": "user", "content": message}],
             "stream": True
         }
-
         response = requests.post(GROQ_API_URL, headers=headers, json=payload, stream=True, timeout=30)
 
         if response.status_code != 200:
