@@ -35,8 +35,11 @@ def get_conn():
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
+    # Удаляем старые таблицы и создаём новые с verification_code
+    cur.execute("DROP TABLE IF EXISTS messages CASCADE")
+    cur.execute("DROP TABLE IF EXISTS users CASCADE")
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             id SERIAL PRIMARY KEY,
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
@@ -46,7 +49,7 @@ def init_db():
         )
     """)
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS messages (
+        CREATE TABLE messages (
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL,
             role TEXT NOT NULL,
@@ -108,9 +111,15 @@ def get_history(user_id):
     return [{"role": r[0], "content": r[1]} for r in rows]
 
 def send_verification_email(to_email, code):
-    # Временно выводим код в логи вместо отправки письма
-    print(f"VERIFICATION CODE for {to_email}: {code}")
-    return
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        return
+    msg = MIMEText(f"Ваш код верификации: {code}\n\nЭто демо-проект портфолио. Пожалуйста, не создавайте лишние аккаунты.")
+    msg["Subject"] = "AI SaaS — Код верификации"
+    msg["From"] = SMTP_EMAIL
+    msg["To"] = to_email
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
+        server.login(SMTP_EMAIL, SMTP_PASSWORD)
+        server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
 
 # --- Маршруты ---
 
@@ -134,9 +143,8 @@ def register():
         return jsonify({"error": "Пользователь с таким email уже существует"}), 400
     code = ''.join(random.choices(string.digits, k=6))
     create_user(email, password, code)
-    # Временно не отправляем письмо
-    # send_verification_email(email, code)
-    return jsonify({"success": True, "message": f"Код отправлен на почту. Ваш код: {code}"})
+    send_verification_email(email, code)
+    return jsonify({"success": True, "message": "Код отправлен на почту"})
 
 @app.route("/verify", methods=["POST", "OPTIONS"])
 def verify():
