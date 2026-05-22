@@ -170,6 +170,36 @@ def login():
         return jsonify({"error": "Почта не подтверждена. Проверьте почту и введите код."}), 403
     return jsonify({"success": True, "user_id": user[0], "email": user[1]})
 
+@app.route("/stats", methods=["GET"])
+def stats():
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id обязателен"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # Количество отправленных сообщений
+    cur.execute("SELECT COUNT(*) FROM messages WHERE user_id = %s AND role = 'user'", (user_id,))
+    sent = cur.fetchone()[0]
+
+    # Количество полученных ответов
+    cur.execute("SELECT COUNT(*) FROM messages WHERE user_id = %s AND role = 'ai'", (user_id,))
+    received = cur.fetchone()[0]
+
+    # Дней активности (сколько разных дней пользователь писал)
+    cur.execute("SELECT COUNT(DISTINCT created_at::date) FROM messages WHERE user_id = %s", (user_id,))
+    days = cur.fetchone()[0]
+
+    conn.close()
+
+    return jsonify({
+        "sent": sent,
+        "received": received,
+        "days": days,
+        "tokens": 0  # Пока заглушка, токены не считаем
+    })
+
 @app.route("/history", methods=["GET"])
 def history():
     user_id = request.args.get("user_id")
