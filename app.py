@@ -14,6 +14,11 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 @app.after_request
+def add_csp_header(response):
+    response.headers['Content-Security-Policy'] = "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;"
+    return response
+
+@app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
@@ -104,14 +109,10 @@ def verify_and_create_user(email, code):
     if not row:
         conn.close()
         return None
-    # Переносим в основную таблицу
     cur.execute("INSERT INTO users (email, password, created_at) VALUES (%s, %s, %s)", (row[1], row[2], row[3]))
-    user_id = cur.fetchone()[0] if hasattr(cur, 'fetchone') else None
-    # Удаляем из pending
     cur.execute("DELETE FROM pending_users WHERE email = %s", (email,))
     conn.commit()
     conn.close()
-    # Получаем id созданного пользователя
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("SELECT id FROM users WHERE email = %s", (email,))
@@ -167,14 +168,11 @@ def register():
         return jsonify({"error": "Email и пароль обязательны"}), 400
     if len(password) < 3:
         return jsonify({"error": "Пароль минимум 3 символа"}), 400
-
     existing = get_user_by_email(email)
     if existing:
         return jsonify({"error": "Пользователь с таким email уже существует"}), 400
-
     pending = get_pending_user(email)
     if pending:
-        # Уже есть неверифицированный — генерируем новый код
         code = ''.join(random.choices(string.digits, k=6))
         conn = get_conn()
         cur = conn.cursor()
@@ -183,7 +181,6 @@ def register():
         conn.close()
         send_verification_email(email, code)
         return jsonify({"success": True, "message": f"Новый код отправлен. Ваш код: {code}"})
-
     code = ''.join(random.choices(string.digits, k=6))
     create_pending_user(email, password, code)
     send_verification_email(email, code)
