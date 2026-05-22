@@ -4,11 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Chat — Личный кабинет</title>
-
     <link rel="stylesheet" href="style.css" />
-
-    <link rel="icon"
-        href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🤖</text></svg>'>
+    <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🤖</text></svg>'>
 </head>
 <body>
     <div class="bg-blur bg-1"></div>
@@ -16,58 +13,43 @@
 
     <header class="header">
         <div class="logo neon-text">AI Chat</div>
-
-        <button class="burger" id="burgerBtn">
-            ☰
-        </button>
-
+        <button class="burger" id="burgerBtn">☰</button>
         <nav class="nav" id="navMenu">
             <a href="chat.html">Чат</a>
             <a href="dashboard.html" class="active">Личный кабинет</a>
-
-            <button class="logout-btn" onclick="logout()">
-                Выйти
-            </button>
+            <button class="logout-btn" onclick="logout()">Выйти</button>
         </nav>
     </header>
 
     <main class="dashboard fade-in">
         <section class="glass-card welcome-card">
-            <h1 id="welcomeText">
-                Добро пожаловать!
-            </h1>
-
-            <p>
-                Ваш AI SaaS кабинет готов к работе.
-            </p>
-
-            <a href="chat.html" class="btn-primary dashboard-btn">
-                Перейти в чат
-            </a>
+            <h1 id="welcomeText">Добро пожаловать!</h1>
+            <p>Ваш AI SaaS кабинет готов к работе.</p>
+            <a href="chat.html" class="btn-primary dashboard-btn">Перейти в чат</a>
         </section>
 
         <section class="stats-grid">
-    <div class="glass-card stat-card">
-        <div class="stat-icon">💬</div>
-        <h3>Сообщений отправлено</h3>
-        <p><span id="statSent">0</span></p>
-    </div>
-    <div class="glass-card stat-card">
-        <div class="stat-icon">🤖</div>
-        <h3>Ответов получено</h3>
-        <p><span id="statReceived">0</span></p>
-    </div>
-    <div class="glass-card stat-card">
-        <div class="stat-icon">📅</div>
-        <h3>Дней активности</h3>
-        <p><span id="statDays">0</span></p>
-    </div>
-    <div class="glass-card stat-card">
-        <div class="stat-icon">⚡</div>
-        <h3>Токенов использовано</h3>
-        <p><span id="statTokens">0</span></p>
-    </div>
-</section>
+            <div class="glass-card stat-card">
+                <div class="stat-icon">💬</div>
+                <h3>Сообщений отправлено</h3>
+                <p><span id="statSent">0</span></p>
+            </div>
+            <div class="glass-card stat-card">
+                <div class="stat-icon">🤖</div>
+                <h3>Ответов получено</h3>
+                <p><span id="statReceived">0</span></p>
+            </div>
+            <div class="glass-card stat-card">
+                <div class="stat-icon">📅</div>
+                <h3>Дней активности</h3>
+                <p><span id="statDays">0</span></p>
+            </div>
+            <div class="glass-card stat-card">
+                <div class="stat-icon">⚡</div>
+                <h3>Токенов использовано</h3>
+                <p><span id="statTokens">0</span></p>
+            </div>
+        </section>
     </main>
 
     <script src="script.js"></script>
