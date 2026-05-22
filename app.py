@@ -55,19 +55,53 @@ def send_verification_email(to_email, code):
         return
 
     try:
-        resend.emails.send({
+        resend.Emails.send({
             "from": "AI Chat <onboarding@resend.dev>",
             "to": to_email,
-            "subject": "AI Chat — код подтверждения",
+            "subject": "Подтверждение аккаунта — AI Chat",
             "html": f"""
-            <div style="font-family:Arial;padding:30px">
-                <h2>Ваш код подтверждения</h2>
-                <div style="font-size:32px;font-weight:bold;color:#6d28d9">
+            <div style="
+                font-family: Inter, Arial;
+                background: #0d1117;
+                padding: 40px;
+                color: #e5e7eb;
+                border-radius: 16px;
+                max-width: 500px;
+                margin: auto;
+            ">
+                <h1 style="
+                    font-size: 22px;
+                    margin-bottom: 10px;
+                ">
+                    Подтвердите ваш аккаунт
+                </h1>
+
+                <p style="color:#9ca3af;">
+                    Используйте код ниже, чтобы завершить регистрацию:
+                </p>
+
+                <div style="
+                    font-size: 36px;
+                    font-weight: bold;
+                    letter-spacing: 6px;
+                    margin: 30px 0;
+                    padding: 16px;
+                    text-align: center;
+                    background: rgba(139,92,246,0.15);
+                    border: 1px solid rgba(139,92,246,0.3);
+                    border-radius: 12px;
+                    color: #8b5cf6;
+                ">
                     {code}
                 </div>
+
+                <p style="color:#6b7280; font-size: 13px;">
+                    Если это были не вы — просто проигнорируйте это письмо.
+                </p>
             </div>
             """
         })
+
     except Exception as e:
         print("EMAIL ERROR:", e)
 
