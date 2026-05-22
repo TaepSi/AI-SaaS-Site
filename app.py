@@ -7,7 +7,7 @@ from datetime import datetime
 import requests
 import psycopg2
 
-from resend import Resend
+from resend 
 
 # ================= APP =================
 
@@ -47,7 +47,7 @@ def get_conn():
 
 # ================= RESEND =================
 
-resend = Resend(RESEND_API_KEY)
+resend.api_key = RESEND_API_KEY
 
 
 def send_verification_email(to_email, code):
