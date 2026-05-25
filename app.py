@@ -194,7 +194,20 @@ def login():
 def chat():
     data = request.get_json()
 
+    user_id = data.get("user_id")
     message = data.get("message", "")
+
+    if not user_id or not message:
+        return jsonify({"error": "bad request"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    # 💾 сохраняем сообщение пользователя
+    cur.execute("""
+        INSERT INTO messages (user_id, role, content, created_at)
+        VALUES (%s, %s, %s, %s)
+    """, (user_id, "user", message, datetime.now().isoformat()))
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -214,7 +227,36 @@ def chat():
     except:
         ai = "AI error"
 
+    # 💾 сохраняем ответ AI
+    cur.execute("""
+        INSERT INTO messages (user_id, role, content, created_at)
+        VALUES (%s, %s, %s, %s)
+    """, (user_id, "ai", ai, datetime.now().isoformat()))
+
+    conn.commit()
+    conn.close()
+
     return jsonify({"reply": ai})
+
+@app.route("/history", methods=["GET"])
+def history():
+    user_id = request.args.get("user_id")
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT role, content FROM messages
+        WHERE user_id=%s
+        ORDER BY id ASC
+    """, (user_id,))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return jsonify([
+        {"role": r[0], "content": r[1]} for r in rows
+    ])
 
 
 @app.route("/")
