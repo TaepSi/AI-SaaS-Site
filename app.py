@@ -1,31 +1,15 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import random
 import string
 from datetime import datetime
-import requests
 import psycopg2
-
-import resend 
-
-# ================= APP =================
+import requests
+import resend
 
 app = Flask(__name__)
-
-CORS(app, resources={
-    r"/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
-
-@app.before_request
-def handle_options():
-    if request.method == "OPTIONS":
-        return jsonify({"ok": True}), 200
-
+CORS(app)
 
 # ================= ENV =================
 
@@ -39,12 +23,6 @@ if not DATABASE_URL:
     raise Exception("DATABASE_URL not found")
 
 
-# ================= DB =================
-
-def get_conn():
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
-
-
 # ================= RESEND =================
 
 resend.api_key = RESEND_API_KEY
@@ -52,74 +30,33 @@ resend.api_key = RESEND_API_KEY
 
 def send_verification_email(to_email, code):
     if not RESEND_API_KEY:
+        print("NO RESEND KEY")
         return
 
     try:
         resend.Emails.send({
             "from": "AI Chat <onboarding@resend.dev>",
             "to": to_email,
-            "subject": "Подтверждение аккаунта — AI Chat",
+            "subject": "AI Chat — код подтверждения",
             "html": f"""
-            <div style="
-                font-family: Inter, Arial;
-                background: #0d1117;
-                padding: 40px;
-                color: #e5e7eb;
-                border-radius: 16px;
-                max-width: 500px;
-                margin: auto;
-            ">
-                <h1 style="
-                    font-size: 22px;
-                    margin-bottom: 10px;
-                ">
-                    Подтвердите ваш аккаунт
-                </h1>
-
-                <p style="color:#9ca3af;">
-                    Используйте код ниже, чтобы завершить регистрацию:
-                </p>
-
-                <div style="
-                    font-size: 36px;
-                    font-weight: bold;
-                    letter-spacing: 6px;
-                    margin: 30px 0;
-                    padding: 16px;
-                    text-align: center;
-                    background: rgba(139,92,246,0.15);
-                    border: 1px solid rgba(139,92,246,0.3);
-                    border-radius: 12px;
-                    color: #8b5cf6;
-                ">
-                    {code}
-                </div>
-
-                <p style="color:#6b7280; font-size: 13px;">
-                    Если это были не вы — просто проигнорируйте это письмо.
-                </p>
+            <div style="font-family:Arial;padding:20px">
+                <h2>Код подтверждения</h2>
+                <p>Ваш код:</p>
+                <h1 style="color:#8b5cf6">{code}</h1>
             </div>
             """
         })
-
     except Exception as e:
         print("EMAIL ERROR:", e)
 
 
-# ================= REGISTER =================
+# ================= DB =================
 
-@app.route("/register", methods=["POST"])
-def register():
-    data = request.get_json()
+def get_conn():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
-    email = data.get("email", "").strip()
-    password = data.get("password", "").strip()
 
-    if not email or not password:
-        return jsonify({"error": "Все поля обязательны"}), 400
-
-    code = ''.join(random.choices(string.digits, k=6))
-
+def init_db():
     conn = get_conn()
     cur = conn.cursor()
 
@@ -134,11 +71,54 @@ def register():
     """)
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            email TEXT UNIQUE,
+            password TEXT,
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            role TEXT,
+            content TEXT,
+            created_at TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+init_db()
+
+
+# ================= AUTH =================
+
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.get_json()
+
+    email = data.get("email", "").strip()
+    password = data.get("password", "").strip()
+
+    if not email or not password:
+        return jsonify({"error": "empty fields"}), 400
+
+    code = "".join(random.choices(string.digits, k=6))
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
         INSERT INTO pending_users (email, password, verification_code, created_at)
         VALUES (%s, %s, %s, %s)
         ON CONFLICT (email)
         DO UPDATE SET verification_code = EXCLUDED.verification_code
-    """, (email, password, code, datetime.now().strftime("%Y-%m-%d %H:%M")))
+    """, (email, password, code, datetime.now().isoformat()))
 
     conn.commit()
     conn.close()
@@ -149,8 +129,6 @@ def register():
 
     return jsonify({"success": True})
 
-
-# ================= VERIFY =================
 
 @app.route("/verify", methods=["POST"])
 def verify():
@@ -163,68 +141,27 @@ def verify():
     cur = conn.cursor()
 
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            email TEXT UNIQUE,
-            password TEXT,
-            created_at TEXT
-        )
-    """)
-
-    cur.execute("""
-        SELECT * FROM pending_users
-        WHERE email = %s AND verification_code = %s
+        SELECT email, password FROM pending_users
+        WHERE email=%s AND verification_code=%s
     """, (email, code))
 
     row = cur.fetchone()
 
     if not row:
-        conn.close()
-        return jsonify({"error": "Неверный код"}), 400
+        return jsonify({"error": "wrong code"}), 400
 
     cur.execute("""
         INSERT INTO users (email, password, created_at)
         VALUES (%s, %s, %s)
         ON CONFLICT (email) DO NOTHING
-    """, (row[1], row[2], row[4]))
+    """, (row[0], row[1], datetime.now().isoformat()))
 
-    cur.execute("DELETE FROM pending_users WHERE email = %s", (email,))
+    cur.execute("DELETE FROM pending_users WHERE email=%s", (email,))
 
     conn.commit()
-
-    cur.execute("SELECT id FROM users WHERE email = %s", (email,))
-    user_id = cur.fetchone()[0]
-
     conn.close()
 
-    return jsonify({"success": True, "user_id": user_id})
-
-
-# ================= LOGIN =================
-
-@app.route("/login", methods=["POST"])
-def login():
-    data = request.get_json()
-
-    email = data.get("email", "")
-    password = data.get("password", "")
-
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("SELECT * FROM users WHERE email=%s", (email,))
-    user = cur.fetchone()
-
-    conn.close()
-
-    if not user or user[2] != password:
-        return jsonify({"error": "Неверные данные"}), 401
-
-    return jsonify({
-        "success": True,
-        "user_id": user[0],
-        "email": user[1]
-    })
+    return jsonify({"success": True})
 
 
 # ================= CHAT =================
@@ -237,7 +174,7 @@ def chat():
     message = data.get("message", "")
 
     if not user_id or not message:
-        return jsonify({"error": "message required"}), 400
+        return jsonify({"error": "bad request"}), 400
 
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -246,16 +183,19 @@ def chat():
 
     payload = {
         "model": "llama-3.3-70b-versatile",
-        "messages": [{"role": "user", "content": message}]
+        "messages": [
+            {"role": "user", "content": message}
+        ]
     }
 
     try:
         r = requests.post(GROQ_API_URL, headers=headers, json=payload)
-        ai_text = r.json()["choices"][0]["message"]["content"]
-    except:
-        ai_text = "Ошибка AI"
+        ai = r.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(e)
+        ai = "AI error"
 
-    return jsonify({"reply": ai_text})
+    return jsonify({"reply": ai})
 
 
 # ================= START =================
